@@ -29,12 +29,6 @@ class RegistrationTrialExtractor:
         
         self.prompt_template = self._load_prompt_template()
 
-        self.hard_reject_keywords = [
-            'extension study', 'open-label extension', 'long-term extension', 
-            'rollover', 'pilot', 'feasibility', 'proof of concept', 'phase 1',
-            'healthy volunteer', 'bioequivalence', 'pk/pd', 'pharmacokinetics',
-            'dietary', 'vitamin', 'yoga', 'device feasibility'
-        ]
 
     
 
@@ -50,7 +44,6 @@ class RegistrationTrialExtractor:
         nct_id = row.get('nct_id', 'Unknown')
         phase = str(row.get('phase', '')).upper()
         if 'PHASE 1' in phase and '2' not in phase:
-            logger.info(f"[{nct_id}] Skipped by Rule: Phase 1")
             return True, "Rule: Phase 1"
         if phase == 'EARLY_PHASE1':
             return True, "Rule: Early Phase 1"
@@ -63,14 +56,7 @@ class RegistrationTrialExtractor:
 
         agency = str(row.get('agency_class', '')).upper()
         if agency in ['NIH', 'FED']:
-            logger.info(f"[{nct_id}] Skipped by Rule: Agency {agency}")
             return True, f"Rule: Non-Industry ({agency})"
-
-        text_corpus = (str(row.get('official_title', '')) + " " + str(row.get('brief_summary', ''))).lower()
-        for kw in self.hard_reject_keywords:
-            if kw in text_corpus:
-                logger.info(f"[{nct_id}] Skipped by Keyword: '{kw}'")
-                return True, f"Rule: Keyword '{kw}'"
 
         return False, None
 
@@ -96,8 +82,6 @@ class RegistrationTrialExtractor:
             detailed_description=detailed_description
         )
         
-        # [NEW] Log the input being sent to the AI
-        logger.info(f"📤 [{nct_id}] Sending to AI:\nTitle: {official_title}\nSummary snippet: {brief_summary[:100]}...") 
 
         try:
             # Configure Safety Settings (BLOCK_NONE)
@@ -133,11 +117,10 @@ class RegistrationTrialExtractor:
                 if response.candidates:
                     finish_reason = response.candidates[0].finish_reason
                 
-                logger.warning(f"⚠️ [{nct_id}] Empty Response. Finish Reason: {finish_reason}")
+                logger.error(f"⚠️ [{nct_id}] Empty Response. Finish Reason: {finish_reason}")
                 return 0, f"AI Error: Empty Response ({finish_reason})"
 
             result_text = response.text.strip()
-            logger.info(f"🤖 [{nct_id}] Gemini Output: {result_text}")
 
             score = 1 if "1" in result_text else 0
             reason = "AI: Registration Intent" if score == 1 else "AI: Exploratory/Supportive"
