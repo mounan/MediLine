@@ -131,7 +131,7 @@ class RegistrationTrialExtractor:
             return 0, f"AI API Error: {str(e)}"
 
     async def _process_all(self, df):
-        sem = asyncio.Semaphore(20)
+        sem = asyncio.Semaphore(5)
 
         async def safe_call(row):
             async with sem:
