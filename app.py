@@ -5,7 +5,36 @@ from data_fetcher import fetch_real_data
 from logic_core import RegistrationTrialExtractor
 
 st.set_page_config(page_title="MediLine Registration Filter", layout="wide", page_icon="💊")
-st.markdown("<style>.stMetric { background-color: #f0f2f6; padding: 10px; border-radius: 5px; }</style>", unsafe_allow_html=True)
+
+# 替换 app.py 中原本的 CSS 部分
+st.markdown("""
+<style>
+    /* 针对整个指标卡片的容器 */
+    [data-testid="stMetric"] {
+        background-color: #f8f9fb; /* 极浅的灰色背景 */
+        border: 1px solid #e1e4e8; /* 浅灰色边框 */
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05); /* 淡淡的阴影 */
+    }
+    
+    /* 针对指标的数字部分 */
+    [data-testid="stMetricValue"] {
+        color: #1c3d5a !important; /* 深蓝色数字，确保 100% 可见 */
+        font-weight: 700;
+    }
+    
+    /* 针对指标的标签部分 */
+    [data-testid="stMetricLabel"] {
+        color: #586069 !important; /* 中灰色标签 */
+    }
+    
+    /* 让指标卡片内部的趋势箭头（delta）位置更协调 */
+    [data-testid="stMetricDelta"] {
+        font-weight: 500;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Header
 st.title("💊 MediLine: Registration Trial Engine (v2.0)")
