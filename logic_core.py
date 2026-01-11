@@ -15,9 +15,9 @@ logger = logging.getLogger("MediLine_AI")
 
 load_dotenv()
 try:
-    API_KEY = st.secrets["GOOGLE_API_KEY"]
+    API_KEY = st.secrets["GEMINI_API_KEY"]
 except:
-    API_KEY = os.getenv("GOOGLE_API_KEY")
+    API_KEY = os.getenv("GEMINI_API_KEY")
 
 
 class RegistrationTrialExtractor:
