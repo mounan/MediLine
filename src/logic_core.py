@@ -4,8 +4,9 @@ from google.genai import types
 import os
 import streamlit as st
 from dotenv import load_dotenv
-import asyncio
+
 import logging
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
@@ -42,9 +43,8 @@ class RegistrationTrialExtractor:
             return None
 
     def _should_skip_ai_analysis(self, row):
-        nct_id = row.get('nct_id', 'Unknown')
         phase = str(row.get('phase', '')).upper()
-        if 'PHASE 1' in phase and '2' not in phase:
+        if 'PHASE1' in phase and '2' not in phase:
             return True, "Rule: Phase 1"
         if phase == 'EARLY_PHASE1':
             return True, "Rule: Early Phase 1"
@@ -143,6 +143,7 @@ class RegistrationTrialExtractor:
         try:
             ai_results = asyncio.run(self._process_all(df))
         except RuntimeError:
+            # If a loop is already running, use it directly
             loop = asyncio.get_event_loop()
             ai_results = loop.run_until_complete(self._process_all(df))
 
