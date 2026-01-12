@@ -4,8 +4,9 @@ from google.genai import types
 import os
 import streamlit as st
 from dotenv import load_dotenv
-import asyncio
+
 import logging
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
@@ -42,22 +43,35 @@ class RegistrationTrialExtractor:
             return None
 
     def _should_skip_ai_analysis(self, row):
-        nct_id = row.get('nct_id', 'Unknown')
+        # 1. Phase 检查 (保留 Phase 2/3)
         phase = str(row.get('phase', '')).upper()
-        if 'PHASE 1' in phase and '2' not in phase:
+        if 'PHASE1' in phase and '2' not in phase:
             return True, "Rule: Phase 1"
         if phase == 'EARLY_PHASE1':
             return True, "Rule: Early Phase 1"
         if phase == 'NOT APPLICABLE':
             return True, "Rule: Phase N/A"
 
+        # 2. Study Type 检查
         study_type = str(row.get('study_type', '')).upper()
         if study_type != 'INTERVENTIONAL':
             return True, f"Rule: {study_type}"
 
+        # 3. Agency Class 检查 (仅保留 Industry)  ← 修复
         agency = str(row.get('agency_class', '')).upper()
-        if agency in ['NIH', 'FED']:
+        if agency != 'INDUSTRY':
             return True, f"Rule: Non-Industry ({agency})"
+
+        # 4. FDA Regulated 检查  ← 新增
+        is_fda_drug = row.get('is_fda_regulated_drug', 'No')
+        is_fda_device = row.get('is_fda_regulated_device', 'No')
+        if is_fda_drug != 'Yes' and is_fda_device != 'Yes':
+            return True, "Rule: Not FDA Regulated"
+
+        # 5. Responsible Party 检查  ← 新增
+        resp_type = str(row.get('responsible_party_type', '')).upper()
+        if resp_type == 'PRINCIPAL_INVESTIGATOR':
+            return True, "Rule: PI-led (IIT)"
 
         return False, None
 
@@ -73,11 +87,11 @@ class RegistrationTrialExtractor:
         if not self.client or not self.prompt_template:
             return 0, "Error"
 
-        official_title = row.get('official_title', 'N/A')
-        brief_summary = row.get('brief_summary', 'N/A')
-        detailed_description = str(
-            row.get('detailed_description',
-                    'N/A'))[:3000]  # Truncate for token efficiency
+        official_title = row.get('official_title', 'Not provided')
+        brief_summary = row.get('brief_summary', 'Not provided')
+        detailed_description = str(row.get('detailed_description', ''))[:3000]
+        if not detailed_description.strip():
+            detailed_description = "Not provided by sponsor."
 
         prompt = self.prompt_template.format(
             official_title=official_title,
@@ -128,7 +142,7 @@ class RegistrationTrialExtractor:
             return 0, f"AI API Error: {str(e)}"
 
     async def _process_all(self, df):
-        sem = asyncio.Semaphore(5)
+        sem = asyncio.Semaphore(6)
 
         async def safe_call(row):
             async with sem:
@@ -143,6 +157,7 @@ class RegistrationTrialExtractor:
         try:
             ai_results = asyncio.run(self._process_all(df))
         except RuntimeError:
+            # If a loop is already running, use it directly
             loop = asyncio.get_event_loop()
             ai_results = loop.run_until_complete(self._process_all(df))
 
