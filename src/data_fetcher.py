@@ -1,6 +1,7 @@
 import requests
 import pandas as pd
 import streamlit as st
+import json
 
 # API Endpoint
 BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
@@ -9,15 +10,26 @@ BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 def fetch_real_data(limit=10, query_term="lung cancer"):
     """
     ClinicalTrials.gov API v2 からデータを取得。
-    Update: Logic Documentに基づき、DetailedDescription, PrimaryOutcome, CompletionDateを追加。
+    
+    簡略版: 
+    - 各薬物の詳細情報（名前、別名、試験臂）を構造化して取得
+    - 主要新薬の自動識別（role判断なし）
+    - 試験臂（Arms）情報の取得
     """
 
     params = {
-        "format": "json",
-        "pageSize": limit,
-        "query.term": query_term,
-        "filter.overallStatus": "RECRUITING|ACTIVE_NOT_RECRUITING|COMPLETED",
-        "sort": "LastUpdatePostDate:desc"
+        "format":
+        "json",
+        "pageSize":
+        limit,
+        "query.term":
+        query_term,
+        "filter.overallStatus":
+        "RECRUITING|ACTIVE_NOT_RECRUITING|COMPLETED",
+        "sort":
+        "LastUpdatePostDate:desc",
+        "filter.advanced":
+        "AREA[InterventionType]DRUG OR AREA[InterventionType]BIOLOGICAL",
     }
 
     try:
@@ -62,7 +74,6 @@ def fetch_real_data(limit=10, query_term="lung cancer"):
 
             # --- Status & Dates (For Launch Prediction) ---
             status_mod = proto.get('statusModule', {})
-            # Primary Completion Date (主要評価項目データ収集完了日)
             pcd_struct = status_mod.get('primaryCompletionDateStruct', {})
             primary_completion_date = pcd_struct.get('date', 'N/A')
 
@@ -79,18 +90,62 @@ def fetch_real_data(limit=10, query_term="lung cancer"):
             phases_list = design.get('phases', [])
             phase = phases_list[0] if phases_list else "Not Applicable"
 
-            # --- Intervention (Drugs) ---
-            arms = proto.get('armsInterventionsModule', {})
-            interventions_list = arms.get('interventions', [])
+            # --- Arms & Interventions ---
+            arms_module = proto.get('armsInterventionsModule', {})
+
+            # 試験臂（Arms）の取得
+            arm_groups = arms_module.get('armGroups', [])
+            arms_info = []
+            for arm in arm_groups:
+                arms_info.append({
+                    "label":
+                    arm.get('label', ''),
+                    "type":
+                    arm.get('type', ''),
+                    "description":
+                    arm.get('description', '')[:200]
+                })
+
+            # 干预措施（Interventions）の詳細取得
+            interventions_list = arms_module.get('interventions', [])
+            interventions_detailed = []
             drug_names = []
             aliases = []
+
             for item in interventions_list:
-                if item.get('type') in [
+                intervention_type = item.get('type', '')
+                if intervention_type in [
                         'DRUG', 'BIOLOGICAL', 'GENETIC', 'COMBINATION_PRODUCT'
                 ]:
-                    drug_names.append(item.get('name'))
-                    if 'otherNames' in item:
-                        aliases.extend(item['otherNames'])
+                    drug_name = item.get('name', '')
+                    other_names = item.get('otherNames', [])
+                    arm_labels = item.get('armGroupLabels', [])
+
+                    drug_names.append(drug_name)
+                    aliases.extend(other_names)
+
+                    # 簡略版: roleなし
+                    interventions_detailed.append({
+                        "name":
+                        drug_name,
+                        "type":
+                        intervention_type,
+                        "aliases":
+                        other_names,
+                        "arms":
+                        arm_labels,
+                        "description":
+                        item.get('description', '')[:200]
+                    })
+
+            # 主要新薬の識別
+            primary_drug = _identify_primary_drug(
+                interventions=interventions_detailed,
+                arms_info=arms_info,
+                sponsor_name=sponsor_name,
+                title=title)
+
+            # 従来形式の文字列（後方互換性）
             intervention_str = ", ".join(
                 drug_names) if drug_names else "No Drug Listed"
             alias_str = ", ".join(aliases) if aliases else ""
@@ -98,37 +153,224 @@ def fetch_real_data(limit=10, query_term="lung cancer"):
             # --- Text Corpus (For Mining) ---
             desc_mod = proto.get('descriptionModule', {})
             brief_summary = desc_mod.get('briefSummary', '')
-            detailed_desc = desc_mod.get('detailedDescription', '')  # 追加: 詳細説明
+            detailed_desc = desc_mod.get('detailedDescription', '')
 
             # --- Outcomes (For Expert Review) ---
             out_mod = proto.get('outcomesModule', {})
             prim_outcomes = out_mod.get('primaryOutcomes', [])
-            # 主要評価項目のリストを文字列化 (例: "OS; PFS")
             prim_measures = [p.get('measure', '') for p in prim_outcomes]
             primary_outcome_str = "; ".join(
                 prim_measures) if prim_measures else "N/A"
 
             # --- データの格納 ---
             trials.append({
-                "nct_id": nct_id,
-                "official_title": title,
-                "sponsor_name": sponsor_name,
-                "agency_class": agency_class,
-                "phase": phase,
-                "study_type": study_type,
-                "responsible_party_type": resp_type,
-                "is_fda_regulated_drug": is_fda_drug,
-                "is_fda_regulated_device": is_fda_device,
-                "intervention_name": intervention_str,
-                "aliases": alias_str,
-                "org_study_id": org_study_id,
-                "brief_summary": brief_summary,
-                "detailed_description": detailed_desc,  # New
-                "primary_completion_date": primary_completion_date,  # New
-                "primary_outcomes": primary_outcome_str  # New
+                "nct_id":
+                nct_id,
+                "official_title":
+                title,
+                "sponsor_name":
+                sponsor_name,
+                "agency_class":
+                agency_class,
+                "phase":
+                phase,
+                "study_type":
+                study_type,
+                "responsible_party_type":
+                resp_type,
+                "is_fda_regulated_drug":
+                is_fda_drug,
+                "is_fda_regulated_device":
+                is_fda_device,
+
+                # 従来形式（後方互換性）
+                "intervention_name":
+                intervention_str,
+                "aliases":
+                alias_str,
+
+                # 主要新薬
+                "primary_drug_name":
+                primary_drug.get('name', '') if primary_drug else '',
+                "primary_drug_aliases":
+                ", ".join(primary_drug.get('aliases', []))
+                if primary_drug else '',
+
+                # 詳細構造（JSON文字列）
+                "interventions_json":
+                json.dumps(interventions_detailed, ensure_ascii=False),
+                "arms_json":
+                json.dumps(arms_info, ensure_ascii=False),
+
+                # 薬物数とプラセボ有無
+                "drug_count":
+                len([
+                    i for i in interventions_detailed
+                    if i['type'] in ['DRUG', 'BIOLOGICAL']
+                ]),
+                "has_placebo":
+                any('placebo' in i['name'].lower()
+                    for i in interventions_detailed),
+                "org_study_id":
+                org_study_id,
+                "brief_summary":
+                brief_summary,
+                "detailed_description":
+                detailed_desc,
+                "primary_completion_date":
+                primary_completion_date,
+                "primary_outcomes":
+                primary_outcome_str
             })
 
         except Exception as parse_err:
             continue
 
     return pd.DataFrame(trials)
+
+
+def _identify_primary_drug(interventions: list, arms_info: list,
+                           sponsor_name: str, title: str) -> dict:
+    """
+    主要新薬を識別する
+    
+    優先順位:
+    1. EXPERIMENTAL臂にのみ存在する薬物
+    2. スポンサーの製品と推定される薬物
+    3. タイトルに含まれる薬物
+    4. 最初のDRUG/BIOLOGICAL（プラセボ以外）
+    """
+    if not interventions:
+        return None
+
+    # EXPERIMENTAL臂のラベルを取得
+    experimental_arms = set()
+    for arm in arms_info:
+        if arm.get('type', '').upper() == 'EXPERIMENTAL':
+            experimental_arms.add(arm['label'])
+
+    # 1. EXPERIMENTAL臂にのみ存在する薬物を探す
+    for drug in interventions:
+        if 'placebo' in drug['name'].lower():
+            continue
+        drug_arms = set(drug.get('arms', []))
+        # この薬物がEXPERIMENTAL臂にのみ存在するか
+        if drug_arms and drug_arms.issubset(experimental_arms):
+            return drug
+
+    # 2. スポンサーの製品を探す
+    for drug in interventions:
+        if 'placebo' in drug['name'].lower():
+            continue
+        if _is_sponsor_drug(drug['name'], sponsor_name):
+            return drug
+
+    # 3. タイトルに含まれる薬物を探す
+    title_lower = title.lower()
+    for drug in interventions:
+        if 'placebo' in drug['name'].lower():
+            continue
+        drug_name_lower = drug['name'].lower()
+        first_word = drug_name_lower.split()[0] if drug_name_lower else ''
+        if first_word and len(first_word) > 3 and first_word in title_lower:
+            return drug
+
+    # 4. 最初のDRUG/BIOLOGICAL（プラセボ以外）
+    for drug in interventions:
+        if drug['type'] in ['DRUG', 'BIOLOGICAL'
+                            ] and 'placebo' not in drug['name'].lower():
+            return drug
+
+    return interventions[0] if interventions else None
+
+
+def _is_sponsor_drug(drug_name: str, sponsor_name: str) -> bool:
+    """
+    薬物がスポンサーの製品かどうかを推定
+    """
+    sponsor_lower = sponsor_name.lower()
+    drug_lower = drug_name.lower()
+
+    sponsor_prefixes = {
+        'merck': ['mk-', 'keytruda'],
+        'bristol': ['bms-', 'opdivo'],
+        'roche': ['ro-', 'tecentriq'],
+        'genentech': ['ro-', 'tecentriq'],
+        'hoffmann': ['ro-'],  # Hoffmann-La Roche
+        'pfizer': ['pf-', 'ibrance'],
+        'novartis': ['nvp-', 'kisqali'],
+        'astrazeneca': ['azd-', 'imfinzi', 'tagrisso'],
+        'lilly': ['ly-', 'verzenio'],
+        'abbvie': ['abbv-'],
+        'mirati': ['mrtx-', 'adagrasib', 'krazati'],
+        'amgen': ['amg-'],
+        'sanofi': ['sar-'],
+        'bayer': ['bay-'],
+        'takeda': ['tak-'],
+        'gilead': ['gs-'],
+    }
+
+    for sponsor_key, prefixes in sponsor_prefixes.items():
+        if sponsor_key in sponsor_lower:
+            for prefix in prefixes:
+                if prefix in drug_lower:
+                    return True
+
+    return False
+
+
+# ============================================================================
+# ユーティリティ関数: 並査集（Union-Find）用のデータ抽出
+# ============================================================================
+
+
+def extract_drug_aliases_for_union_find(df: pd.DataFrame) -> list:
+    """
+    DataFrameから薬物名と別名のペアを抽出（並査集構築用）
+    
+    Returns:
+        list of tuples: [(drug_name, alias), ...]
+    """
+    pairs = []
+
+    for _, row in df.iterrows():
+        try:
+            interventions = json.loads(row.get('interventions_json', '[]'))
+            for drug in interventions:
+                drug_name = drug.get('name', '')
+                aliases = drug.get('aliases', [])
+
+                for alias in aliases:
+                    if alias and drug_name:
+                        pairs.append((drug_name, alias))
+        except:
+            continue
+
+    return pairs
+
+
+def get_all_drug_names(df: pd.DataFrame) -> set:
+    """
+    DataFrameから全ての薬物名（主名称+別名）を抽出
+    
+    Returns:
+        set: 全ての薬物名
+    """
+    all_names = set()
+
+    for _, row in df.iterrows():
+        try:
+            interventions = json.loads(row.get('interventions_json', '[]'))
+            for drug in interventions:
+                drug_name = drug.get('name', '')
+                if drug_name:
+                    all_names.add(drug_name)
+
+                aliases = drug.get('aliases', [])
+                for alias in aliases:
+                    if alias:
+                        all_names.add(alias)
+        except:
+            continue
+
+    return all_names
