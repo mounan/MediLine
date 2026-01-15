@@ -3,3 +3,4 @@ pyvenv.cfg
 */__pycache__/*
 .venv/*
 __pycache__/*
+bpiqapi.yaml

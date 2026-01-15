@@ -7,37 +7,41 @@ import json
 BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 
 
-def fetch_real_data(limit=10, query_term="lung cancer"):
+def fetch_real_data(limit=10, query_term="lung cancer", sponsor_term=None):
     """
     ClinicalTrials.gov API v2 からデータを取得。
-    
-    簡略版: 
-    - 各薬物の詳細情報（名前、別名、試験臂）を構造化して取得
-    - 主要新薬の自動識別（role判断なし）
-    - 試験臂（Arms）情報の取得
+    query_term: 疾患・条件 (query.term / query.cond)
+    sponsor_term: スポンサー名 (query.spons)
     """
 
+    # 基础参数
     params = {
-        "format":
-        "json",
-        "pageSize":
-        limit,
-        "query.term":
-        query_term,
-        "filter.overallStatus":
-        "RECRUITING|ACTIVE_NOT_RECRUITING|COMPLETED",
-        "sort":
-        "LastUpdatePostDate:desc",
-        "filter.advanced":
-        "AREA[InterventionType]DRUG OR AREA[InterventionType]BIOLOGICAL",
+        "format": "json",
+        "pageSize": limit,
+        "filter.overallStatus": "RECRUITING|ACTIVE_NOT_RECRUITING|COMPLETED",
+        "sort": "LastUpdatePostDate:desc",
     }
 
+    # 动态添加搜索条件
+    # query_term 用于搜索疾病/条件 (API原有的 query.term)
+    if query_term:
+        params["query.term"] = query_term
+    
+    # 新增: sponsor_term 用于搜索特定公司 (API的 query.spons)
+    if sponsor_term:
+        params["query.spons"] = sponsor_term
+
     try:
+        # 显示正在搜索的内容
+        search_msg = f'"{query_term}"'
+        if sponsor_term:
+            search_msg += f' + Sponsor: "{sponsor_term}"'
+
         if st.runtime.exists():
-            with st.spinner(f'Fetching {limit} trials for "{query_term}"...'):
+            with st.spinner(f'Fetching {limit} trials for {search_msg}...'):
                 response = requests.get(BASE_URL, params=params, timeout=20)
         else:
-            print(f"Requesting API: {BASE_URL}...")
+            print(f"Requesting API: {BASE_URL} with params {params}...")
             response = requests.get(BASE_URL, params=params, timeout=20)
 
         response.raise_for_status()

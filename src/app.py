@@ -48,8 +48,16 @@ st.markdown("""
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Search Params")
+
+    # 1. 疾病搜索框 (保留)
     search_term = st.text_input("Disease / Condition",
                                 value="Non-small cell lung cancer")
+
+    # 2. 新增: 公司搜索框
+    sponsor_filter = st.text_input("Sponsor / Company (Optional)",
+                                   value="",
+                                   placeholder="e.g. Lexeo, Merck, Eli Lilly")
+
     num_trials = st.slider("Fetch Limit", 100, 1000, 20)
 
     if st.button("🔄 Analyze Pipeline"):
@@ -67,8 +75,10 @@ with st.sidebar:
 
 # Data Processing
 @st.cache_data
-def load_data(n, term):
-    raw_df = fetch_real_data(limit=n, query_term=term)
+def load_data(n, term, sponsor):  # <--- 更新函数签名，接收 sponsor
+    # 将 sponsor 传给 data_fetcher
+    raw_df = fetch_real_data(limit=n, query_term=term, sponsor_term=sponsor)
+
     if raw_df.empty: return pd.DataFrame()
 
     extractor = RegistrationTrialExtractor()
@@ -80,8 +90,13 @@ def load_data(n, term):
 
 
 # Run
-with st.spinner(f"Mining CTG data for '{search_term}'..."):
-    df_result = load_data(num_trials, search_term)
+loading_msg = f"Mining CTG data for '{search_term}'"
+if sponsor_filter:
+    loading_msg += f" by {sponsor_filter}"
+
+with st.spinner(f"{loading_msg}..."):
+    # 调用更新后的 load_data
+    df_result = load_data(num_trials, search_term, sponsor_filter)
 
 if df_result.empty:
     st.warning("No data found.")
